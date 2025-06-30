@@ -18,6 +18,7 @@ from transformers import AutoModel, AutoTokenizer
 from torch.amp import autocast, GradScaler
 from gymnasium.vector import SyncVectorEnv
 import logging
+import argparse
 
 
 # Configure a module-level logger for consistent, timestamped output
@@ -187,6 +188,7 @@ class PPOAgent:
         expert_episodes: int = 0,
         num_envs: int = 8,
         curriculum_stages: List[List[str]] | None = None,
+        track_word_stats: bool = True,
     ):
         self.env_words = env_words
         # NOTE: this value will be overwritten by the curriculum setup below
@@ -230,7 +232,10 @@ class PPOAgent:
         # Track last checkpointed episode to avoid duplicate saves within same episode count
         self._last_checkpoint_episode: int = -1
 
-        self.win_per_word = defaultdict(lambda: [0, 0])  # {word: [wins, total_games]}
+        self.track_word_stats = track_word_stats
+        
+        # Word-level win tracking (can be disabled for large dictionaries)
+        self.win_per_word = defaultdict(lambda: [0, 0]) if self.track_word_stats else defaultdict(lambda: [0, 0])
 
         # --------------------------------------------------------------
         # Curriculum setup                                             
@@ -408,7 +413,7 @@ class PPOAgent:
                             won,
                         )
 
-                        if won:
+                        if won and self.track_word_stats:
                             # Try to obtain the word from the env instance first; fall back to info dict
                             winning_word = getattr(envs.envs[i], "word", None)
                             if winning_word is None:
@@ -445,7 +450,7 @@ class PPOAgent:
                             if word_list is not None and i < len(word_list):
                                 current_word = word_list[i]
 
-                    if current_word is not None:
+                    if current_word is not None and self.track_word_stats:
                         self.win_per_word[current_word][1] += 1  # total games
                         if won:
                             self.win_per_word[current_word][0] += 1  # wins
@@ -704,30 +709,56 @@ class PPOAgent:
             logger.debug("Injected: '%s' with guesses: %s", word, guessed)
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Train Hangman PPO agent")
+    parser.add_argument("--dictionary", action="store_true", help="Use a wordfreq English word list (>=3 chars) as the word list")
+    parser.add_argument("--dict-size", type=int, default=50000, help="Number of most frequent words to load from wordfreq (default: 50k)")
+    # Existing hyperparameter CLI hooks could be added here later
+    args = parser.parse_args()
+
     # --------------------------------------------------------------
-    # Curriculum definition                                         
+    # Curriculum / Word list selection                               
     # --------------------------------------------------------------
-    FULL_WORDS = [
-        "car", "bus", "dog", "cat", "judo", "aloe", "soda",
-        "apple", "banana", "cherry", "date", "fig", "grape",
-        "planet", "orange", "rabbit",
-        # Expanded vocabulary
-        "bat", "cap", "fan", "hat", "jam", "kid", "log", "man", "net", "owl",
-        "pan", "red", "run", "sun", "tap", "vet", "win", "yak", "zip",
-        "bark", "clam", "drip", "frog", "golf", "hike", "iris", "joke", "kick", "lamp",
-        "mint", "nest", "opal", "palm", "quiz", "rest", "snap", "toad", "vent", "warp",
-        "brick", "cabin", "daisy", "eagle", "flame", "globe", "hoist", "index", "jelly", "knock",
-        "lemon", "moose", "noble", "ocean", "penny", "quilt", "river", "spoon", "tiger", "unity"
-    ]
+    if args.dictionary:
+        try:
+            from wordfreq import top_n_list
+        except ImportError:
+            logger.error("wordfreq package not installed. Install it via 'pip install wordfreq' to use --dictionary mode.")
+            raise
+
+        dict_words = top_n_list("en", args.dict_size)
+        dict_words = [w.lower() for w in dict_words if len(w) >= 3 and w.isalpha()]
+        logger.info("Loaded %d dictionary words from wordfreq (top %d)", len(dict_words), args.dict_size)
+
+        FULL_WORDS = dict_words
+        track_word_stats = False  # Disable per-word tracking/logging for huge vocabularies
+        logger.info("Using dictionary mode with %d words", len(FULL_WORDS))
+    else:
+        FULL_WORDS = [
+            "car", "bus", "dog", "cat", "judo", "aloe", "soda",
+            "apple", "banana", "cherry", "date", "fig", "grape",
+            "planet", "orange", "rabbit",
+            # Expanded vocabulary
+            "bat", "cap", "fan", "hat", "jam", "kid", "log", "man", "net", "owl",
+            "pan", "red", "run", "sun", "tap", "vet", "win", "yak", "zip",
+            "bark", "clam", "drip", "frog", "golf", "hike", "iris", "joke", "kick", "lamp",
+            "mint", "nest", "opal", "palm", "quiz", "rest", "snap", "toad", "vent", "warp",
+            "brick", "cabin", "daisy", "eagle", "flame", "globe", "hoist", "index", "jelly", "knock",
+            "lemon", "moose", "noble", "ocean", "penny", "quilt", "river", "spoon", "tiger", "unity",
+            # Hard words
+            "zinc", "quiz", "jinx", "flux", "vex", "quip", "jazz", "lazy", "zero", "buzz",
+        ]
+        track_word_stats = True
 
     agent = PPOAgent(
-        env_words=FULL_WORDS,  # used as fallback; curriculum will start with SMALL_WORDS
+        env_words=FULL_WORDS,  # curriculum will start with FULL_WORDS (or dict)
         episodes=60_000,
         checkpoint_interval=500,
         log_interval=10,
         update_interval=20,
-        gradient_accumulation_steps=2,
+        gradient_accumulation_steps=1,
         expert_episodes=15,
-        num_envs=8
+        num_envs=128,
+        batch_size=128,
+        track_word_stats=track_word_stats,
     )
     agent.train() 

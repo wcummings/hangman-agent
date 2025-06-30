@@ -3,3 +3,4 @@ transformers>=4.39.0
 tqdm>=4.64.0
 tensorboard>=2.0.0 
 gymnasium>=0.29.0
+wordfreq>=3.0.0
