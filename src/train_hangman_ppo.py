@@ -625,15 +625,24 @@ class PPOAgent:
                         self.policy.optimizer.step()
                     self.policy.optimizer.zero_grad()
 
-        # Final optimizer step if any gradients remain (e.g., dataset size < grad_accum)
-        if self.scaler.is_enabled():
-            self.scaler.unscale_(self.policy.optimizer)
-            nn.utils.clip_grad_norm_(self.policy.parameters(), 1.0)
-            self.scaler.step(self.policy.optimizer)
-            self.scaler.update()
-        else:
-            nn.utils.clip_grad_norm_(self.policy.parameters(), 1.0)
-            self.policy.optimizer.step()
+        # Final optimizer step **only if** there are still gradients waiting to be applied. This
+        # avoids calling ``GradScaler.step`` without a prior ``scale``/``backward`` pass, which
+        # triggers the "No inf checks were recorded" assertion observed on some hardware.
+
+        gradients_present = any(
+            p.grad is not None and p.grad.data is not None for p in self.policy.parameters()
+        )
+
+        if gradients_present:
+            if self.scaler.is_enabled():
+                # Safely apply the remaining accumulated gradients
+                self.scaler.unscale_(self.policy.optimizer)
+                nn.utils.clip_grad_norm_(self.policy.parameters(), 1.0)
+                self.scaler.step(self.policy.optimizer)
+                self.scaler.update()
+            else:
+                nn.utils.clip_grad_norm_(self.policy.parameters(), 1.0)
+                self.policy.optimizer.step()
         
         # Log training metrics
         if update_count > 0:
