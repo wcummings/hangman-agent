@@ -65,8 +65,13 @@ class GPT2Policy(nn.Module):
 
     def __init__(self, lr: float = 3e-5):
         super().__init__()
-        # Use Apple Metal backend
-        self.device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+        # Prefer CUDA (GPU) if available, otherwise fall back to Apple Metal (MPS) and finally CPU
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        elif torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+        else:
+            self.device = torch.device("cpu")
         
         self.tokenizer = AutoTokenizer.from_pretrained("distilgpt2")
         # LLMs can process input in batches. To ensure all batches are the same length, padding
@@ -544,7 +549,11 @@ class PPOAgent:
                 batch = dataset[i : i + self.batch_size]
                 b_texts, b_actions, b_old_logp, b_returns, b_adv = zip(*batch)
 
-                with autocast(enabled=self.scaler.is_enabled(), dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float16, device_type="mps" if torch.backends.mps.is_available() else "cpu"):
+                with autocast(
+                    enabled=self.scaler.is_enabled(),
+                    dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float16,
+                    device_type="cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"),
+                ):
                     logits, values = self.policy(list(b_texts))
                     # Clip values to prevent explosion (cast to fp32 first for numerical stability)
                     values = torch.clamp(values.float(), -100.0, 100.0)
