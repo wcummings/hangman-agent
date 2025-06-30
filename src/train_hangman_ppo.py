@@ -456,11 +456,6 @@ class PPOAgent:
                             for w, (win_cnt, total_cnt) in sorted(self.win_per_word.items()):
                                 logger.info("%s: %d/%d = %.2f%%", w, win_cnt, total_cnt, (win_cnt / total_cnt) * 100 if total_cnt else 0.0)
 
-                    # --------------------------------------------------
-                    # Curriculum progression
-                    # --------------------------------------------------
-                    self._maybe_advance_curriculum()
-
             obs = next_obs
 
             # ----------------------------------------------------------
@@ -708,50 +703,19 @@ class PPOAgent:
 
             logger.debug("Injected: '%s' with guesses: %s", word, guessed)
 
-    # ------------------------------------------------------------------
-    # Curriculum helpers
-    # ------------------------------------------------------------------
-    def _maybe_advance_curriculum(self):
-        """Advance to the next curriculum stage once the agent achieves
-        a 100% win-rate over the sliding window defined in TrainingStats.
-        """
-        # Nothing to do if we are already at the final stage
-        if self.curriculum_stage_idx >= len(self.curriculum_stages) - 1:
-            return
-
-        # Require a *full* window of victories to move on
-        if len(self.stats.win_history) == self.stats.window_size and all(self.stats.win_history):
-            self.curriculum_stage_idx += 1
-            self.env_words = self.curriculum_stages[self.curriculum_stage_idx]
-            # Reset word-level tracking so that logging only reflects the
-            # current stage.
-            self.win_per_word.clear()
-
-            logger.info(
-                "🎓 Curriculum advanced to stage %d/%d – now training on %d words",
-                self.curriculum_stage_idx + 1,
-                len(self.curriculum_stages),
-                len(self.env_words),
-            )
-
-
 if __name__ == "__main__":
     # --------------------------------------------------------------
     # Curriculum definition                                         
     # --------------------------------------------------------------
-    SMALL_WORDS = ["car", "bus", "dog", "cat"]
     FULL_WORDS = [
         "car", "bus", "dog", "cat", "judo", "aloe", "soda",
         "apple", "banana", "cherry", "date", "fig", "grape",
         "planet", "orange", "rabbit",
     ]
 
-    CURRICULUM = [SMALL_WORDS, FULL_WORDS]
-
     agent = PPOAgent(
         env_words=FULL_WORDS,  # used as fallback; curriculum will start with SMALL_WORDS
-        curriculum_stages=CURRICULUM,
-        episodes=7_000,
+        episodes=20_000,
         checkpoint_interval=500,
         log_interval=10,
         update_interval=20,
