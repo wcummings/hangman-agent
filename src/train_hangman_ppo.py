@@ -712,14 +712,12 @@ if __name__ == "__main__":
         "apple", "banana", "cherry", "date", "fig", "grape",
         "planet", "orange", "rabbit",
         # Expanded vocabulary
-        # More 3 letter words
-        "pit", "rig", "big", "fin", "dig", "bag",
-        # More 4 letter words
-        "pits", "rigs", "bogs", "fins", "digs", "bags",
-        # More 5 letter words
-        "pitts", "riggs", "bogus", "finks", "digus", "bagus",
-        # More 6 letter words
-        "pittsburg", "rigging", "bogus", "finks", "digus", "bagus",
+        "bat", "cap", "fan", "hat", "jam", "kid", "log", "man", "net", "owl",
+        "pan", "red", "run", "sun", "tap", "vet", "win", "yak", "zip",
+        "bark", "clam", "drip", "frog", "golf", "hike", "iris", "joke", "kick", "lamp",
+        "mint", "nest", "opal", "palm", "quiz", "rest", "snap", "toad", "vent", "warp",
+        "brick", "cabin", "daisy", "eagle", "flame", "globe", "hoist", "index", "jelly", "knock",
+        "lemon", "moose", "noble", "ocean", "penny", "quilt", "river", "spoon", "tiger", "unity"
     ]
 
     agent = PPOAgent(
