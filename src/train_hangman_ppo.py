@@ -186,8 +186,10 @@ class PPOAgent:
         gradient_accumulation_steps: int = 2,
         expert_episodes: int = 0,
         num_envs: int = 8,
+        curriculum_stages: List[List[str]] | None = None,
     ):
         self.env_words = env_words
+        # NOTE: this value will be overwritten by the curriculum setup below
         self.episodes = episodes
         self.gamma = gamma
         self.gae_lambda = gae_lambda
@@ -230,6 +232,17 @@ class PPOAgent:
 
         self.win_per_word = defaultdict(lambda: [0, 0])  # {word: [wins, total_games]}
 
+        # --------------------------------------------------------------
+        # Curriculum setup                                             
+        # --------------------------------------------------------------
+        if curriculum_stages is None:
+            curriculum_stages = [env_words]
+        self.curriculum_stages = curriculum_stages
+        self.curriculum_stage_idx: int = 0  # starts with the first stage
+        # "env_words" always points at the *current* stage's list so that
+        # the word‐sampler generator sees updates automatically.
+        self.env_words = self.curriculum_stages[self.curriculum_stage_idx]
+
         # Load checkpoint if exists (updates start_episode etc.)
         self._load_checkpoint()
 
@@ -266,6 +279,7 @@ class PPOAgent:
                 'batch_size': self.batch_size,
             },
             'win_per_word': dict(self.win_per_word),
+            'curriculum_stage_idx': self.curriculum_stage_idx,
         }
         
         checkpoint_path = os.path.join(self.checkpoint_dir, f"checkpoint_ep_{episode}.pth")
@@ -304,6 +318,11 @@ class PPOAgent:
             if wpw is not None:
                 # Use defaultdict to maintain default structure
                 self.win_per_word = defaultdict(lambda: [0, 0], wpw)
+            
+            # Restore curriculum stage if present
+            self.curriculum_stage_idx = checkpoint.get('curriculum_stage_idx', 0)
+            self.curriculum_stage_idx = min(self.curriculum_stage_idx, len(self.curriculum_stages) - 1)
+            self.env_words = self.curriculum_stages[self.curriculum_stage_idx]
             
             logger.info("Resumed from episode %d", self.start_episode)
             self.stats.log_stats(self.start_episode - 1)
@@ -436,6 +455,11 @@ class PPOAgent:
                             logger.info("\n--- Win rates by word (wins/total | win%%) ---")
                             for w, (win_cnt, total_cnt) in sorted(self.win_per_word.items()):
                                 logger.info("%s: %d/%d = %.2f%%", w, win_cnt, total_cnt, (win_cnt / total_cnt) * 100 if total_cnt else 0.0)
+
+                    # --------------------------------------------------
+                    # Curriculum progression
+                    # --------------------------------------------------
+                    self._maybe_advance_curriculum()
 
             obs = next_obs
 
@@ -647,7 +671,6 @@ class PPOAgent:
                 elif "value_head" in name:
                     self.writer.add_histogram(f"Weights/ValueHead/{name}", param, self.stats.total_episodes)
 
-
     def _inject_expert_episodes(self, num_episodes: int = 5):
         logger.info("🔁 Injecting %d expert episodes into memory...", num_episodes)
         word_iter = self._word_sampler()
@@ -676,26 +699,49 @@ class PPOAgent:
 
             logger.debug("Injected: '%s' with guesses: %s", word, guessed)
 
+    # ------------------------------------------------------------------
+    # Curriculum helpers
+    # ------------------------------------------------------------------
+    def _maybe_advance_curriculum(self):
+        """Advance to the next curriculum stage once the agent achieves
+        a 100% win-rate over the sliding window defined in TrainingStats.
+        """
+        # Nothing to do if we are already at the final stage
+        if self.curriculum_stage_idx >= len(self.curriculum_stages) - 1:
+            return
+
+        # Require a *full* window of victories to move on
+        if len(self.stats.win_history) == self.stats.window_size and all(self.stats.win_history):
+            self.curriculum_stage_idx += 1
+            self.env_words = self.curriculum_stages[self.curriculum_stage_idx]
+            # Reset word-level tracking so that logging only reflects the
+            # current stage.
+            self.win_per_word.clear()
+
+            logger.info(
+                "🎓 Curriculum advanced to stage %d/%d – now training on %d words",
+                self.curriculum_stage_idx + 1,
+                len(self.curriculum_stages),
+                len(self.env_words),
+            )
+
 
 if __name__ == "__main__":
-    # Provide a small word list for training; extend as desired
-    WORDS = [
+    # --------------------------------------------------------------
+    # Curriculum definition                                         
+    # --------------------------------------------------------------
+    SMALL_WORDS = ["car", "bus", "dog", "cat"]
+    FULL_WORDS = [
         "car", "bus", "dog", "cat", "judo", "aloe", "soda",
         "apple", "banana", "cherry", "date", "fig", "grape",
-        # More words: added @ ~18k episodes
         "planet", "orange", "rabbit",
-        # More words: added @ 20500 episodes
-        # "avocado", "puzzling", "keyboard", "elephant", "mystery",
-        # Even more words
-        # "zit", "arc", "bone", "sled", "pizza", "pasta", "salad", "soup", "steak", "fish", 
-        # "chicken", "beef", "pork", "turkey", "ham", "bacon", "egg", "milk", "cheese", "yogurt",
-        # "butter", "sugar", "salt", "pepper", "cinnamon", "nutmeg", "vanilla", "chocolate", 
-        # "strawberry", "blueberry", "raspberry", "blackberry", "pineapple", "mango", "peach", 
-        # "pear", "plum", "cherry", "apple", "banana", "orange", "pineapple", "mango", "peach", 
     ]
 
+    CURRICULUM = [SMALL_WORDS, FULL_WORDS]
+
     agent = PPOAgent(
-        WORDS, 
+        env_words=FULL_WORDS,  # used as fallback; curriculum will start with SMALL_WORDS
+        curriculum_stages=CURRICULUM,
         episodes=7_000,
         checkpoint_interval=500,
         log_interval=10,
