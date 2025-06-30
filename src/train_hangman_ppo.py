@@ -711,11 +711,20 @@ if __name__ == "__main__":
         "car", "bus", "dog", "cat", "judo", "aloe", "soda",
         "apple", "banana", "cherry", "date", "fig", "grape",
         "planet", "orange", "rabbit",
+        # Expanded vocabulary
+        # More 3 letter words
+        "pit", "rig", "big", "fin", "dig", "bag",
+        # More 4 letter words
+        "pits", "rigs", "bogs", "fins", "digs", "bags",
+        # More 5 letter words
+        "pitts", "riggs", "bogus", "finks", "digus", "bagus",
+        # More 6 letter words
+        "pittsburg", "rigging", "bogus", "finks", "digus", "bagus",
     ]
 
     agent = PPOAgent(
         env_words=FULL_WORDS,  # used as fallback; curriculum will start with SMALL_WORDS
-        episodes=20_000,
+        episodes=60_000,
         checkpoint_interval=500,
         log_interval=10,
         update_interval=20,
